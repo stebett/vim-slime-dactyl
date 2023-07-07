@@ -25,7 +25,6 @@ function! s:ScreenSend(config, text)
         \ " -X eval \"readreg p " . g:slime_paste_file . "\"")
   call system("screen -S " . shellescape(a:config["sessionname"]) . " -p " . shellescape(a:config["windowname"]) .
         \ " -X paste p")
-  call system('screen -X colon ""')
 endfunction
 
 function! s:ScreenSessionNames(A,L,P)
@@ -57,7 +56,90 @@ function! s:KittyConfig() abort
     let b:slime_config = {"window_id": 1, "listen_on": ""}
   end
   let b:slime_config["window_id"] = str2nr(system("kitty @ select-window --self"))
+  if v:shell_error || b:slime_config["window_id"] == $KITTY_WINDOW_ID
+    let b:slime_config["window_id"] = input("kitty window_id: ", b:slime_config["window_id"])
+  endif
   let b:slime_config["listen_on"] = input("kitty listen on: ", b:slime_config["listen_on"])
+endfunction
+
+"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+" Zellij
+"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+function! s:ZellijSend(config, text)
+  let target_session = ""
+  if a:config["session_id"] != "current"
+    let target_session = "-s " . shellescape(a:config["session_id"])
+  end
+  if a:config["relative_pane"] != "current"
+    call system("zellij " . target_session . " action move-focus " . shellescape(a:config["relative_pane"]))
+  end
+  call system("zellij " . target_session . " action write-chars " . shellescape(a:text))
+  if a:config["relative_pane"] != "current"
+    call system("zellij " . target_session . " action move-focus " . shellescape(a:config["relative_move_back"]))
+  end
+endfunction
+
+function! s:ZellijConfig() abort
+  if !exists("b:slime_config")
+    let b:slime_config = {"session_id": "current", "relative_pane": "current"}
+  end
+  let b:slime_config["session_id"] = input("zellij session: ", b:slime_config["session_id"])
+  let b:slime_config["relative_pane"] = input("target pane relative position: ", b:slime_config["relative_pane"])
+  if b:slime_config["relative_pane"] == "current"
+    let b:slime_config["relative_move_back"] = "current"
+  elseif b:slime_config["relative_pane"] == "right"
+    let b:slime_config["relative_move_back"] = "left"
+  elseif b:slime_config["relative_pane"] == "left"
+    let b:slime_config["relative_move_back"] = "right"
+  elseif b:slime_config["relative_pane"] == "up"
+    let b:slime_config["relative_move_back"] = "down"
+  elseif b:slime_config["relative_pane"] == "down"
+    let b:slime_config["relative_move_back"] = "up"
+  else
+    echoerr "Error: Allowed values are (current, right, left, up, down)"
+  endif
+endfunction
+
+"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+" Wezterm
+"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+function! s:WeztermSend(config, text)
+  if exists("b:slime_bracketed_paste")
+    let bracketed_paste = b:slime_bracketed_paste
+  elseif exists("g:slime_bracketed_paste")
+    let bracketed_paste = g:slime_bracketed_paste
+  else
+    let bracketed_paste = 0
+  endif
+
+  let [text_to_paste, has_crlf] = [a:text, 0]
+  if bracketed_paste
+    if a:text[-2:] == "\r\n"
+      let [text_to_paste, has_crlf] = [a:text[:-3], 1]
+    elseif a:text[-1:] == "\r" || a:text[-1:] == "\n"
+      let [text_to_paste, has_crlf] = [a:text[:-2], 1]
+    endif
+  endif
+
+  if bracketed_paste
+    call system("wezterm cli send-text --pane-id=" . shellescape(a:config["pane_id"]), text_to_paste)
+  else
+    call system("wezterm cli send-text --no-paste --pane-id=" . shellescape(a:config["pane_id"]), text_to_paste)
+  endif
+
+  " trailing newline
+  if has_crlf
+    call system("wezterm cli send-text --no-paste --pane-id=" . shellescape(a:config["pane_id"]), "\n")
+  end
+endfunction
+
+function! s:WeztermConfig() abort
+  if !exists("b:slime_config")
+    let b:slime_config = {"pane_id": 1}
+  end
+  let b:slime_config["pane_id"] = input("wezterm pane_id: ", b:slime_config["pane_id"])
 endfunction
 
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
@@ -75,9 +157,41 @@ function! s:TmuxCommand(config, args)
 endfunction
 
 function! s:TmuxSend(config, text)
-  call s:WritePasteFile(a:text)
-  call s:TmuxCommand(a:config, "load-buffer " . g:slime_paste_file)
-  call s:TmuxCommand(a:config, "paste-buffer -d -t " . shellescape(a:config["target_pane"]))
+  if exists("b:slime_bracketed_paste")
+    let bracketed_paste = b:slime_bracketed_paste
+  elseif exists("g:slime_bracketed_paste")
+    let bracketed_paste = g:slime_bracketed_paste
+  else
+    let bracketed_paste = 0
+  endif
+
+  let [text_to_paste, has_crlf] = [a:text, 0]
+  if bracketed_paste
+    if a:text[-2:] == "\r\n"
+      let [text_to_paste, has_crlf] = [a:text[:-3], 1]
+    elseif a:text[-1:] == "\r" || a:text[-1:] == "\n"
+      let [text_to_paste, has_crlf] = [a:text[:-2], 1]
+    endif
+  endif
+
+  " reasonable hardcode, will become config if needed
+  let chunk_size = 1000
+
+  for i in range(0, len(text_to_paste) / chunk_size)
+    let chunk = text_to_paste[i * chunk_size : (i + 1) * chunk_size - 1]
+    call s:WritePasteFile(chunk)
+    call s:TmuxCommand(a:config, "load-buffer " . g:slime_paste_file)
+    if bracketed_paste
+      call s:TmuxCommand(a:config, "paste-buffer -d -p -t " . shellescape(a:config["target_pane"]))
+    else
+      call s:TmuxCommand(a:config, "paste-buffer -d -t " . shellescape(a:config["target_pane"]))
+    end
+  endfor
+
+  " trailing newline
+  if has_crlf
+    call s:TmuxCommand(a:config, "send-keys -t " . shellescape(a:config["target_pane"]) . " Enter")
+  end
 endfunction
 
 function! s:TmuxPaneNames(A,L,P)
@@ -106,13 +220,22 @@ function! s:NeovimSend(config, text)
   " So this s:WritePasteFile can help as a small lock & delay
   call s:WritePasteFile(a:text)
   call chansend(str2nr(a:config["jobid"]), split(a:text, "\n", 1))
+  " if b:slime_config is {"jobid": ""} and not configured
+  " then unset it for automatic configuration next time
+  if b:slime_config["jobid"]  == ""
+      unlet b:slime_config
+  endif
 endfunction
 
 function! s:NeovimConfig() abort
   if !exists("b:slime_config")
     let b:slime_config = {"jobid": get(g:, "slime_last_channel", "")}
   end
-  let b:slime_config["jobid"] = input("jobid: ", b:slime_config["jobid"])
+  if exists("g:slime_get_jobid")
+    let b:slime_config["jobid"] = g:slime_get_jobid()
+  else
+    let b:slime_config["jobid"] = input("jobid: ", b:slime_config["jobid"])
+  end
 endfunction
 
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
@@ -165,13 +288,9 @@ function! s:VimterminalSend(config, text)
     echoerr "Invalid terminal. Use :SlimeConfig to select a terminal"
     return
   endif
-  " Ideally we ought to be able to use a single term_sendkeys call however as
-  " of vim 8.0.1203 doing so can cause terminal display issues for longer
-  " selections of text.
-  for l in split(a:text,'\n\zs')
-    call term_sendkeys(bufnr,substitute(l,'\n',"\r",''))
-    call term_wait(bufnr)
-  endfor
+  " send the text, translating newlines to enter keycode for Windows or any
+  " other platforms where they are not the same
+  call term_sendkeys(bufnr,substitute(a:text,'\n',"\r",'g'))
 endfunction
 
 function! s:VimterminalDescription(idx,info)
@@ -199,13 +318,15 @@ function! s:VimterminalConfig() abort
         \ : 1
   if choice > 0
     if choice>len(terms)
-      if !exists("g:slime_vimterminal_cmd")
-          let cmd = input("Enter a command to run [".&shell."]:")
-          if len(cmd)==0
-            let cmd = &shell
-          endif
+      if exists("b:slime_vimterminal_cmd")
+        let cmd = b:slime_vimterminal_cmd
+      elseif exists("g:slime_vimterminal_cmd")
+        let cmd = g:slime_vimterminal_cmd
       else
-          let cmd = g:slime_vimterminal_cmd
+        let cmd = input("Enter a command to run [".&shell."]:")
+        if len(cmd)==0
+          let cmd = &shell
+        endif
       endif
       let winid = win_getid()
       if exists("g:slime_vimterminal_config")
@@ -226,7 +347,7 @@ endfunction
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
 function! s:X11Send(config, text)
-  call system("xdotool type --delay 0 --window " . b:slime_config["window_id"] . " -- " . shellescape(a:text))
+  call system("xdotool type --delay 0 --window " . shellescape(b:slime_config["window_id"]) . " -- " . shellescape(a:text))
 endfunction
 
 function! s:X11Config() abort
@@ -241,7 +362,7 @@ endfunction
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
 function! s:DtachSend(config, text)
-  call system("dtach -p " . b:slime_config["socket_path"], a:text)
+  call system("dtach -p " . shellescape(b:slime_config["socket_path"]), a:text)
 endfunction
 
 function! s:DtachConfig() abort
@@ -260,8 +381,14 @@ function! s:SID()
 endfun
 
 function! s:WritePasteFile(text)
-  " could check exists("*writefile")
-  call system("cat > " . g:slime_paste_file, a:text)
+  let paste_dir = fnamemodify(g:slime_paste_file, ":p:h")
+  if !isdirectory(paste_dir)
+    call mkdir(paste_dir, "p")
+  endif
+  let output = system("cat > " . shellescape(g:slime_paste_file), a:text)
+  if v:shell_error
+    echoerr output
+  endif
 endfunction
 
 function! s:_EscapeText(text)
