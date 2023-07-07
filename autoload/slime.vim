@@ -374,6 +374,45 @@ function! slime#send_cell() abort
   endif
 endfunction
 
+function! slime#send_range_julia(startline, endline, id) abort
+  call s:SlimeGetConfig()
+
+  let rv = getreg('"')
+  let rt = getregtype('"')
+  silent exe a:startline . ',' . a:endline . 'yank'
+  let output = getreg('@')
+  let output2 = 'startblock(' . a:id . ')' . output . 'endblock(ans)'
+  call slime#send(output2)
+  call setreg('"', rv, rt)
+endfunction
+
+function! slime#send_cell_julia() abort
+  if exists("b:slime_cell_delimiter")
+    let cell_delimiter = b:slime_cell_delimiter
+  elseif exists("g:slime_cell_delimiter")
+    let cell_delimiter = g:slime_cell_delimiter
+  else
+    echoerr "b:slime_cell_delimeter is not defined"
+    return
+  endif
+
+  let line_ini = search(cell_delimiter, 'bcnW')
+  let line_end = search(cell_delimiter, 'nW')
+
+  let id = getline(line_ini)
+  let id = matchstr(id, '\d\+')
+
+  " line after delimiter or top of file
+  let line_ini = line_ini ? line_ini + 1 : 1
+  " line before delimiter or bottom of file
+  let line_end = line_end ? line_end - 1 : line("$")
+
+  if line_ini <= line_end
+    call slime#send_range_julia(line_ini, line_end, id)
+  endif
+endfunction
+
+
 function! slime#store_curpos()
   if g:slime_preserve_curpos == 1
     let s:cur = winsaveview()

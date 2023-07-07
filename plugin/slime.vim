@@ -21,6 +21,7 @@ noremap <unique> <script> <silent> <Plug>SlimeMotionSend <SID>Operator
 noremap <unique> <script> <silent> <Plug>SlimeParagraphSend <SID>Operatorip
 noremap <unique> <script> <silent> <Plug>SlimeConfig :<c-u>SlimeConfig<cr>
 noremap <unique> <script> <silent> <Plug>SlimeSendCell :<c-u>call slime#send_cell()<cr>
+noremap <unique> <script> <silent> <Plug>SlimeSendCellJulia :<c-u>call slime#send_cell_julia()<cr>
 
 if !exists("g:slime_no_mappings") || !g:slime_no_mappings
   if !hasmapto('<Plug>SlimeRegionSend', 'x')
