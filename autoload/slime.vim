@@ -529,13 +529,13 @@ function! slime#send_cell_julia() abort
   let id = getline(line_ini)
   let id = matchstr(id, '\d\+')
 
-  " line after delimiter or top of file
-  let line_ini = line_ini ? line_ini + 1 : 1
-  " line before delimiter or bottom of file
-  let line_end = line_end ? line_end - 1 : line("$")
+  " line OF delimiter or top of file
+  let line_ini = line_ini ? line_ini : 1
+  " line OF delimiter or bottom of file
+  let line_end = line_end ? line_end -1 : line("$")
 
   if line_ini <= line_end
-    call slime#send_range_julia(line_ini, line_end, id)
+    call slime#send_range(line_ini, line_end)
   endif
 endfunction
 
